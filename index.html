@@ -1,0 +1,505 @@
+```html
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Blockudoku 게임</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        body { margin: 0; padding: 0; overscroll-behavior: none; }
+        * { touch-action: none; user-select: none; -webkit-user-select: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // 게임에 사용될 블럭 모양들 (1은 블럭, 0은 빈공간)
+        const SHAPES = [
+          [[1]], // 1x1
+          [[1, 1]], // 2x1 H
+          [[1], [1]], // 2x1 V
+          [[1, 1, 1]], // 3x1 H
+          [[1], [1], [1]], // 3x1 V
+          [[1, 1, 1, 1]], // 4x1 H
+          [[1], [1], [1], [1]], // 4x1 V
+          [[1, 1, 1, 1, 1]], // 5x1 H
+          [[1], [1], [1], [1], [1]], // 5x1 V
+          [[1, 1], [1, 1]], // 2x2
+          [[1, 1, 1], [1, 1, 1], [1, 1, 1]], // 3x3
+          // 작은 L자 모양들
+          [[1, 1], [1, 0]],
+          [[1, 1], [0, 1]],
+          [[1, 0], [1, 1]],
+          [[0, 1], [1, 1]],
+          // 큰 L자 모양들
+          [[1, 1, 1], [1, 0, 0], [1, 0, 0]],
+          [[1, 1, 1], [0, 0, 1], [0, 0, 1]],
+          [[1, 0, 0], [1, 0, 0], [1, 1, 1]],
+          [[0, 0, 1], [0, 0, 1], [1, 1, 1]],
+          // T자 모양들
+          [[1, 1, 1], [0, 1, 0]],
+          [[0, 1, 0], [1, 1, 1]],
+          [[1, 0], [1, 1], [1, 0]],
+          [[0, 1], [1, 1], [0, 1]],
+          // 대각선/Z/S 형태들
+          [[1, 1, 0], [0, 1, 1]],
+          [[0, 1, 1], [1, 1, 0]],
+          [[1, 0], [1, 1], [0, 1]],
+          [[0, 1], [1, 1], [1, 0]]
+        ];
+
+        const BOARD_SIZE = 9;
+
+        // 빈 보드 생성 함수
+        const createEmptyGrid = () => Array(BOARD_SIZE).fill(null).map(() => Array(BOARD_SIZE).fill(0));
+
+        // 무작위 블럭 3개 뽑기
+        const getRandomShapes = () => {
+          return Array(3).fill(null).map(() => {
+            const randomIndex = Math.floor(Math.random() * SHAPES.length);
+            return SHAPES[randomIndex];
+          });
+        };
+
+        // 아이콘 컴포넌트
+        const TrophyIcon = () => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+        );
+
+        const RotateCcwIcon = () => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+        );
+
+        function App() {
+          const [grid, setGrid] = useState(createEmptyGrid());
+          const [hand, setHand] = useState([null, null, null]);
+          const [score, setScore] = useState(0);
+          const [bestScore, setBestScore] = useState(0);
+          const [gameOver, setGameOver] = useState(false);
+          const [combo, setCombo] = useState(0);
+
+          // 드래그 상태
+          const [dragState, setDragState] = useState({
+            isDragging: false,
+            shapeIndex: null,
+            shape: null,
+            x: 0,
+            y: 0,
+          });
+
+          const [preview, setPreview] = useState(null);
+          const gridRef = useRef(null);
+
+          useEffect(() => {
+            const savedBest = localStorage.getItem('blockudoku_best');
+            if (savedBest) setBestScore(parseInt(savedBest, 10));
+            setHand(getRandomShapes());
+          }, []);
+
+          const checkGameOver = useCallback((currentGrid, currentHand) => {
+            const isHandEmpty = currentHand.every(s => s === null);
+            if (isHandEmpty) return false;
+
+            for (let h = 0; h < currentHand.length; h++) {
+              const shape = currentHand[h];
+              if (!shape) continue;
+
+              for (let r = 0; r < BOARD_SIZE; r++) {
+                for (let c = 0; c < BOARD_SIZE; c++) {
+                  if (isValidPlacement(currentGrid, shape, r, c)) {
+                    return false;
+                  }
+                }
+              }
+            }
+            return true;
+          }, []);
+
+          const isValidPlacement = (currentGrid, shape, startRow, startCol) => {
+            for (let r = 0; r < shape.length; r++) {
+              for (let c = 0; c < shape[r].length; c++) {
+                if (shape[r][c] === 1) {
+                  const boardR = startRow + r;
+                  const boardC = startCol + c;
+                  if (boardR < 0 || boardR >= BOARD_SIZE || boardC < 0 || boardC >= BOARD_SIZE) {
+                    return false;
+                  }
+                  if (currentGrid[boardR][boardC] === 1) {
+                    return false;
+                  }
+                }
+              }
+            }
+            return true;
+          };
+
+          const checkAndClear = (currentGrid) => {
+            let newGrid = currentGrid.map(row => [...row]);
+            let cellsToClear = new Set();
+            let linesCleared = 0;
+
+            for (let r = 0; r < BOARD_SIZE; r++) {
+              if (newGrid[r].every(cell => cell === 1)) {
+                linesCleared++;
+                for (let c = 0; c < BOARD_SIZE; c++) cellsToClear.add(`${r},${c}`);
+              }
+            }
+
+            for (let c = 0; c < BOARD_SIZE; c++) {
+              let isFull = true;
+              for (let r = 0; r < BOARD_SIZE; r++) {
+                if (newGrid[r][c] === 0) isFull = false;
+              }
+              if (isFull) {
+                linesCleared++;
+                for (let r = 0; r < BOARD_SIZE; r++) cellsToClear.add(`${r},${c}`);
+              }
+            }
+
+            for (let br = 0; br < 3; br++) {
+              for (let bc = 0; bc < 3; bc++) {
+                let isFull = true;
+                for (let r = 0; r < 3; r++) {
+                  for (let c = 0; c < 3; c++) {
+                    if (newGrid[br * 3 + r][bc * 3 + c] === 0) isFull = false;
+                  }
+                }
+                if (isFull) {
+                  linesCleared++;
+                  for (let r = 0; r < 3; r++) {
+                    for (let c = 0; c < 3; c++) {
+                      cellsToClear.add(`${br * 3 + r},${bc * 3 + c}`);
+                    }
+                  }
+                }
+              }
+            }
+
+            cellsToClear.forEach(coord => {
+              const [r, c] = coord.split(',').map(Number);
+              newGrid[r][c] = 0;
+            });
+
+            return { newGrid, clearedCount: cellsToClear.size, linesCleared };
+          };
+
+          const handlePointerDown = (e, index, shape) => {
+            if (gameOver || !shape) return;
+            
+            // 터치/마우스 이벤트 지원
+            let clientX, clientY;
+            if (e.type.includes('touch')) {
+                clientX = e.touches[0].clientX;
+                clientY = e.touches[0].clientY;
+            } else {
+                clientX = e.clientX;
+                clientY = e.clientY;
+            }
+
+            setDragState({
+              isDragging: true,
+              shapeIndex: index,
+              shape: shape,
+              x: clientX,
+              y: clientY,
+            });
+            setPreview(null);
+          };
+
+          const handlePointerMove = (e) => {
+            if (!dragState.isDragging) return;
+            // 기본 스크롤 방지
+            e.preventDefault();
+
+            let x, y;
+            if (e.type.includes('touch')) {
+                x = e.touches[0].clientX;
+                y = e.touches[0].clientY;
+            } else {
+                x = e.clientX;
+                y = e.clientY;
+            }
+            
+            setDragState(prev => ({ ...prev, x, y }));
+
+            if (gridRef.current) {
+              const rect = gridRef.current.getBoundingClientRect();
+              const cellSize = rect.width / BOARD_SIZE;
+
+              const visualCenterY = y - (cellSize * 1.5);
+              const visualCenterX = x;
+
+              const relativeX = visualCenterX - rect.left;
+              const relativeY = visualCenterY - rect.top;
+
+              const targetCol = Math.floor(relativeX / cellSize);
+              const targetRow = Math.floor(relativeY / cellSize);
+
+              const shape = dragState.shape;
+              const startRow = targetRow - Math.floor(shape.length / 2);
+              const startCol = targetCol - Math.floor(shape[0].length / 2);
+
+              if (
+                startRow >= -shape.length && startRow < BOARD_SIZE &&
+                startCol >= -shape[0].length && startCol < BOARD_SIZE
+              ) {
+                 if (isValidPlacement(grid, shape, startRow, startCol)) {
+                  setPreview({ startRow, startCol, shape });
+                } else {
+                   setPreview({ startRow, startCol, shape, invalid: true });
+                }
+              } else {
+                setPreview(null);
+              }
+            }
+          };
+
+          const handlePointerUp = () => {
+            if (!dragState.isDragging) return;
+
+            if (preview && !preview.invalid) {
+              let newGrid = grid.map(row => [...row]);
+              let blocksPlaced = 0;
+
+              for (let r = 0; r < preview.shape.length; r++) {
+                for (let c = 0; c < preview.shape[r].length; c++) {
+                  if (preview.shape[r][c] === 1) {
+                    newGrid[preview.startRow + r][preview.startCol + c] = 1;
+                    blocksPlaced++;
+                  }
+                }
+              }
+
+              const { newGrid: clearedGrid, clearedCount, linesCleared } = checkAndClear(newGrid);
+              
+              let earnedPoints = blocksPlaced;
+              let newCombo = combo;
+
+              if (linesCleared > 0) {
+                newCombo += 1;
+                earnedPoints += (clearedCount * 2) + (newCombo * 10);
+              } else {
+                newCombo = 0;
+              }
+
+              setGrid(clearedGrid);
+              setCombo(newCombo);
+              updateScore(earnedPoints);
+
+              let newHand = [...hand];
+              newHand[dragState.shapeIndex] = null;
+
+              if (newHand.every(s => s === null)) {
+                newHand = getRandomShapes();
+              }
+              
+              setHand(newHand);
+
+              if (checkGameOver(clearedGrid, newHand)) {
+                setGameOver(true);
+              }
+            }
+
+            setDragState({ isDragging: false, shapeIndex: null, shape: null, x: 0, y: 0 });
+            setPreview(null);
+          };
+
+          const updateScore = (points) => {
+            setScore(prev => {
+              const newScore = prev + points;
+              if (newScore > bestScore) {
+                setBestScore(newScore);
+                localStorage.setItem('blockudoku_best', newScore.toString());
+              }
+              return newScore;
+            });
+          };
+
+          const restartGame = () => {
+            setGrid(createEmptyGrid());
+            setHand(getRandomShapes());
+            setScore(0);
+            setCombo(0);
+            setGameOver(false);
+          };
+
+          const renderShape = (shape) => {
+            if (!shape) return null;
+            return (
+              <div className="flex flex-col gap-[1px]" style={{ width: 'fit-content' }}>
+                {shape.map((row, rIdx) => (
+                  <div key={rIdx} className="flex gap-[1px]">
+                    {row.map((cell, cIdx) => (
+                      <div
+                        key={cIdx}
+                        className={`w-5 h-5 sm:w-8 sm:h-8 rounded-[2px] ${
+                          cell ? 'bg-indigo-500 shadow-sm' : 'bg-transparent'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            );
+          };
+
+          const getCellSize = () => {
+            if (gridRef.current) {
+               return gridRef.current.getBoundingClientRect().width / BOARD_SIZE;
+            }
+            return 30;
+          };
+
+          // 이벤트 리스너를 document에 등록하여 화면 밖으로 드래그해도 동작하도록 함
+          useEffect(() => {
+              document.addEventListener('mousemove', handlePointerMove, { passive: false });
+              document.addEventListener('mouseup', handlePointerUp);
+              document.addEventListener('touchmove', handlePointerMove, { passive: false });
+              document.addEventListener('touchend', handlePointerUp);
+              
+              return () => {
+                  document.removeEventListener('mousemove', handlePointerMove);
+                  document.removeEventListener('mouseup', handlePointerUp);
+                  document.removeEventListener('touchmove', handlePointerMove);
+                  document.removeEventListener('touchend', handlePointerUp);
+              }
+          }, [dragState, preview, grid, hand]); // 의존성 추가
+
+          return (
+            <div className="min-h-screen bg-slate-50 flex flex-col items-center py-8 font-sans">
+              <div className="w-full max-w-md px-4 flex justify-between items-end mb-6">
+                <div>
+                  <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-800 tracking-tight">Blockudoku</h1>
+                  <p className="text-slate-500 font-medium text-sm">3x3 블럭 퍼즐</p>
+                </div>
+                <div className="flex gap-4">
+                  <div className="flex flex-col items-center">
+                    <span className="text-xs text-slate-500 font-bold mb-1">점수</span>
+                    <span className="text-xl font-bold text-indigo-600">{score}</span>
+                  </div>
+                  <div className="flex flex-col items-center">
+                    <span className="text-xs text-slate-500 font-bold mb-1 flex items-center gap-1">
+                      <TrophyIcon /> 최고 점수
+                    </span>
+                    <span className="text-xl font-bold text-slate-700">{bestScore}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="relative w-full max-w-[400px] px-4">
+                <div 
+                  ref={gridRef}
+                  className="w-full aspect-square bg-slate-300 border-2 border-slate-400 p-[2px] grid grid-cols-3 grid-rows-3 gap-[2px] rounded-sm shadow-inner"
+                >
+                  {Array(9).fill(null).map((_, boxIdx) => (
+                    <div key={boxIdx} className="grid grid-cols-3 grid-rows-3 gap-[1px]">
+                      {Array(9).fill(null).map((_, cellIdx) => {
+                        const r = Math.floor(boxIdx / 3) * 3 + Math.floor(cellIdx / 3);
+                        const c = (boxIdx % 3) * 3 + (cellIdx % 3);
+                        const isFilled = grid[r][c] === 1;
+                        
+                        return (
+                          <div
+                            key={cellIdx}
+                            className={`w-full h-full rounded-[1px] transition-colors duration-150 ${
+                              isFilled ? 'bg-indigo-500 shadow-sm' : 'bg-slate-100'
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+
+                {gameOver && (
+                  <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm rounded-lg mx-4">
+                    <h2 className="text-3xl font-bold text-slate-800 mb-2">게임 오버!</h2>
+                    <p className="text-slate-600 mb-6 font-medium">더 이상 놓을 수 있는 블럭이 없습니다.</p>
+                    <button
+                      onClick={restartGame}
+                      className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-full font-bold shadow-lg transition-transform active:scale-95"
+                    >
+                      <RotateCcwIcon /> 다시 하기
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="w-full max-w-[400px] mt-8 px-4 flex justify-between items-center gap-2">
+                {hand.map((shape, idx) => (
+                  <div 
+                    key={idx} 
+                    className={`w-20 h-20 sm:w-28 sm:h-28 flex items-center justify-center cursor-pointer bg-white rounded-xl shadow-sm border border-slate-200 transition-opacity ${
+                      dragState.shapeIndex === idx ? 'opacity-0' : 'opacity-100'
+                    }`}
+                    onMouseDown={(e) => handlePointerDown(e, idx, shape)}
+                    onTouchStart={(e) => handlePointerDown(e, idx, shape)}
+                  >
+                    {renderShape(shape)}
+                  </div>
+                ))}
+              </div>
+
+              {dragState.isDragging && (
+                <div
+                  className="fixed pointer-events-none z-50 flex flex-col"
+                  style={{
+                    left: preview && gridRef.current ? 
+                          gridRef.current.getBoundingClientRect().left + (preview.startCol * getCellSize()) : 
+                          dragState.x,
+                    top: preview && gridRef.current ? 
+                         gridRef.current.getBoundingClientRect().top + (preview.startRow * getCellSize()) : 
+                         dragState.y,
+                    transform: preview ? 'none' : 'translate(-50%, -150%)',
+                    gap: '1px',
+                    transition: 'left 0.05s linear, top 0.05s linear'
+                  }}
+                >
+                  {dragState.shape.map((row, rIdx) => (
+                    <div key={rIdx} className="flex" style={{ gap: '1px' }}>
+                      {row.map((cell, cIdx) => {
+                         const isInvalid = preview && preview.invalid;
+                         const cellSize = preview ? getCellSize() - 1 : 28;
+                         
+                         return (
+                          <div
+                            key={cIdx}
+                            style={{ width: cellSize, height: cellSize }}
+                            className={`rounded-[2px] ${
+                              cell 
+                                ? isInvalid 
+                                  ? 'bg-red-400 opacity-80' 
+                                  : 'bg-indigo-500 shadow-md scale-105' 
+                                : 'bg-transparent'
+                            } transition-all duration-100`}
+                          />
+                        )
+                      })}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+
+```
