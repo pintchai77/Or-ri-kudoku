@@ -24,6 +24,18 @@
     <div id="root"></div>
 
     <script type="text/babel">
+
+        // 카카오톡 내장 브라우저 감지 및 안내 스크립트
+        const userAgent = navigator.userAgent.toLowerCase();
+        if (userAgent.indexOf("kakaotalk") > -1) {
+            alert(
+                "🎮 폰에 게임을 설치해서 즐기시려면!\n\n" +
+                "현재 화면에서는 '홈 화면에 추가'가 불가능합니다.\n" +
+                "화면 오른쪽 아래의 [점 3개 ⁝] 또는 [나침반] 아이콘을 눌러서\n" +
+                "[다른 브라우저로 열기]나 [Safari로 열기]를 선택해 주세요!"
+            );
+        }
+        
         const { useState, useEffect, useRef, useCallback } = React;
 
         // 게임에 사용될 블럭 모양들 (1은 블럭, 0은 빈공간)
